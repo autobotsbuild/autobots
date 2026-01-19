@@ -45,133 +45,211 @@ func (ve ValidationErrors) AsError() error {
 	return fmt.Errorf("%w: %s", ErrInvalidContract, ve.Error())
 }
 
-// ValidateContract validates the v0.0.1 schema and internal references.
-// It does NOT enforce test pass/fail (that’s CI/runner responsibility).
+func (ve *ValidationErrors) Add(path, msg string) {
+	*ve = append(*ve, ValidationError{Path: path, Msg: msg})
+}
+
+func (ve *ValidationErrors) Addf(path, format string, args ...any) {
+	*ve = append(*ve, ValidationError{Path: path, Msg: fmt.Sprintf(format, args...)})
+}
+
+// ----------------------------
+// Public entry point
+// ----------------------------
+
 func ValidateContract(c *Contract) error {
 	var errs ValidationErrors
 
-	// Top-level required
+	if c == nil {
+		errs.Add("", "contract is nil")
+		return errs.AsError()
+	}
+
+	validateTopLevel(c, &errs)
+	validateSpec(&c.Spec, &errs)
+
+	return errs.AsError()
+}
+
+// ----------------------------
+// Top-level validation
+// ----------------------------
+
+func validateTopLevel(c *Contract, errs *ValidationErrors) {
 	if strings.TrimSpace(c.APIVersion) == "" {
-		errs = append(errs, ValidationError{Path: "apiVersion", Msg: "required"})
+		errs.Add("apiVersion", "required")
 	}
 	if strings.TrimSpace(c.Kind) == "" {
-		errs = append(errs, ValidationError{Path: "kind", Msg: "required"})
+		errs.Add("kind", "required")
 	} else if c.Kind != "Contract" {
-		errs = append(errs, ValidationError{Path: "kind", Msg: "must be 'Contract'"})
+		errs.Add("kind", "must be 'Contract'")
 	}
 
-	// Metadata required: is_draft must exist in YAML, but in Go it’s bool default false.
-	// If you want to detect “missing vs false”, you’d use *bool. v0.0.1 doesn’t require that,
-	// so we accept false as a valid explicit value.
-	// Labels optional.
+	// metadata.is_draft is a bool; absence vs false is not distinguishable unless you use *bool.
+	// v0.0.1 accepts false as a valid explicit value.
+}
 
-	// Parties required
-	if strings.TrimSpace(c.Spec.Consumer.Component) == "" {
-		errs = append(errs, ValidationError{Path: "spec.consumer.component", Msg: "required"})
-	}
-	if strings.TrimSpace(c.Spec.Provider.Component) == "" {
-		errs = append(errs, ValidationError{Path: "spec.provider.component", Msg: "required"})
+// ----------------------------
+// Spec validation
+// ----------------------------
+
+func validateSpec(spec *ContractSpec, errs *ValidationErrors) {
+	if spec == nil {
+		errs.Add("spec", "required")
+		return
 	}
 
-	// Surface required
-	if strings.TrimSpace(c.Spec.Surface.Kind) == "" {
-		errs = append(errs, ValidationError{Path: "spec.surface.kind", Msg: "required"})
-	} else {
-		switch c.Spec.Surface.Kind {
-		case "http":
-			if c.Spec.Surface.HTTP == nil {
-				errs = append(errs, ValidationError{Path: "spec.surface.http", Msg: "required for kind=http"})
-			} else {
-				if strings.TrimSpace(c.Spec.Surface.HTTP.Method) == "" {
-					errs = append(errs, ValidationError{Path: "spec.surface.http.method", Msg: "required"})
-				}
-				if strings.TrimSpace(c.Spec.Surface.HTTP.Path) == "" {
-					errs = append(errs, ValidationError{Path: "spec.surface.http.path", Msg: "required"})
-				} else if !strings.HasPrefix(c.Spec.Surface.HTTP.Path, "/") {
-					errs = append(errs, ValidationError{Path: "spec.surface.http.path", Msg: "must start with '/'"})
-				}
-				if c.Spec.Surface.HTTP.Auth != nil {
-					// scheme/scopes optional, but validate sane values if present
-					if strings.ContainsAny(c.Spec.Surface.HTTP.Auth.Scheme, " \t\n") {
-						errs = append(errs, ValidationError{Path: "spec.surface.http.auth.scheme", Msg: "must not contain whitespace"})
-					}
-				}
-			}
-		default:
-			errs = append(errs, ValidationError{Path: "spec.surface.kind", Msg: "unsupported kind (v0.0.1 supports only 'http')"})
+	validateParties(spec, errs)
+	validateSurface(&spec.Surface, errs)
+
+	assertionIDs := validateAssertions(spec.Assertions, errs)
+	validateBindings(&spec.Bindings, assertionIDs, errs)
+}
+
+func validateParties(spec *ContractSpec, errs *ValidationErrors) {
+	if strings.TrimSpace(spec.Consumer.Component) == "" {
+		errs.Add("spec.consumer.component", "required")
+	}
+	if strings.TrimSpace(spec.Provider.Component) == "" {
+		errs.Add("spec.provider.component", "required")
+	}
+}
+
+// ----------------------------
+// Surface validation
+// ----------------------------
+
+func validateSurface(s *ContractSurface, errs *ValidationErrors) {
+	if s == nil {
+		errs.Add("spec.surface", "required")
+		return
+	}
+
+	if strings.TrimSpace(s.Kind) == "" {
+		errs.Add("spec.surface.kind", "required")
+		return
+	}
+
+	switch s.Kind {
+	case "http":
+		validateHTTP(s.HTTP, errs)
+	default:
+		errs.Add("spec.surface.kind", "unsupported kind (v0.0.1 supports only 'http')")
+	}
+}
+
+func validateHTTP(h *HTTPSurface, errs *ValidationErrors) {
+	if h == nil {
+		errs.Add("spec.surface.http", "required for kind=http")
+		return
+	}
+
+	if strings.TrimSpace(h.Method) == "" {
+		errs.Add("spec.surface.http.method", "required")
+	}
+	if strings.TrimSpace(h.Path) == "" {
+		errs.Add("spec.surface.http.path", "required")
+	} else if !strings.HasPrefix(h.Path, "/") {
+		errs.Add("spec.surface.http.path", "must start with '/'")
+	}
+
+	if h.Auth != nil {
+		// auth fields optional; validate basic sanity if present
+		if strings.ContainsAny(h.Auth.Scheme, " \t\n") {
+			errs.Add("spec.surface.http.auth.scheme", "must not contain whitespace")
 		}
+		// scopes may be empty; no further constraints in v0.0.1
+	}
+}
+
+// ----------------------------
+// Assertions validation
+// ----------------------------
+
+type AssertionIDSet map[string]struct{}
+
+func validateAssertions(assertions []Assertion, errs *ValidationErrors) AssertionIDSet {
+	if len(assertions) == 0 {
+		errs.Add("spec.assertions", "must have at least one assertion")
+		return AssertionIDSet{}
 	}
 
-	// Assertions required
-	if len(c.Spec.Assertions) == 0 {
-		errs = append(errs, ValidationError{Path: "spec.assertions", Msg: "must have at least one assertion"})
-	}
-	assertionIDs := make(map[string]struct{}, len(c.Spec.Assertions))
-	for i, a := range c.Spec.Assertions {
+	ids := make(AssertionIDSet, len(assertions))
+	for i, a := range assertions {
 		prefix := fmt.Sprintf("spec.assertions[%d]", i)
+
 		if strings.TrimSpace(a.ID) == "" {
-			errs = append(errs, ValidationError{Path: prefix + ".id", Msg: "required"})
+			errs.Add(prefix+".id", "required")
 			continue
 		}
-		if _, ok := assertionIDs[a.ID]; ok {
-			errs = append(errs, ValidationError{Path: prefix + ".id", Msg: "duplicate assertion id"})
+		if _, exists := ids[a.ID]; exists {
+			errs.Add(prefix+".id", "duplicate assertion id")
 		} else {
-			assertionIDs[a.ID] = struct{}{}
+			ids[a.ID] = struct{}{}
 		}
+
 		if strings.TrimSpace(a.Text) == "" {
-			errs = append(errs, ValidationError{Path: prefix + ".text", Msg: "required"})
+			errs.Add(prefix+".text", "required")
 		}
 	}
 
-	// Tests required (bindings.tests)
-	if len(c.Spec.Bindings.Tests) == 0 {
-		errs = append(errs, ValidationError{Path: "spec.bindings.tests", Msg: "must have at least one test binding"})
+	return ids
+}
+
+// ----------------------------
+// Bindings/tests validation
+// ----------------------------
+
+func validateBindings(b *ContractBindings, assertionIDs AssertionIDSet, errs *ValidationErrors) {
+	if b == nil {
+		errs.Add("spec.bindings", "required")
+		return
 	}
-	testIDs := make(map[string]struct{}, len(c.Spec.Bindings.Tests))
-	for i, t := range c.Spec.Bindings.Tests {
+
+	if len(b.Tests) == 0 {
+		errs.Add("spec.bindings.tests", "must have at least one test binding")
+		return
+	}
+
+	testIDs := make(map[string]struct{}, len(b.Tests))
+	for i, t := range b.Tests {
 		prefix := fmt.Sprintf("spec.bindings.tests[%d]", i)
 
 		if strings.TrimSpace(t.ID) == "" {
-			errs = append(errs, ValidationError{Path: prefix + ".id", Msg: "required"})
+			errs.Add(prefix+".id", "required")
 		} else {
 			if _, ok := testIDs[t.ID]; ok {
-				errs = append(errs, ValidationError{Path: prefix + ".id", Msg: "duplicate test id"})
+				errs.Add(prefix+".id", "duplicate test id")
 			} else {
 				testIDs[t.ID] = struct{}{}
 			}
 		}
 
 		if strings.TrimSpace(t.Kind) == "" {
-			errs = append(errs, ValidationError{Path: prefix + ".kind", Msg: "required"})
+			errs.Add(prefix+".kind", "required")
 		} else {
 			switch t.Kind {
 			case "postman", "sql":
-				// ok
+				// ok (v0.0.1)
 			default:
-				errs = append(errs, ValidationError{Path: prefix + ".kind", Msg: "unsupported kind (v0.0.1 supports postman|sql)"})
+				errs.Add(prefix+".kind", "unsupported kind (v0.0.1 supports postman|sql)")
 			}
 		}
 
 		if strings.TrimSpace(t.Path) == "" {
-			errs = append(errs, ValidationError{Path: prefix + ".path", Msg: "required"})
+			errs.Add(prefix+".path", "required")
 		}
 
-		// Covers must reference existing assertion IDs.
+		// covers must reference existing assertions
 		for j, aid := range t.Covers {
 			if _, ok := assertionIDs[aid]; !ok {
-				errs = append(errs, ValidationError{
-					Path: fmt.Sprintf("%s.covers[%d]", prefix, j),
-					Msg:  fmt.Sprintf("unknown assertion id '%s'", aid),
-				})
+				errs.Addf(fmt.Sprintf("%s.covers[%d]", prefix, j), "unknown assertion id '%s'", aid)
 			}
 		}
 
-		// Optional: enforce that required tests cover something.
-		// Comment out if you don’t want this rule.
+		// required tests should cover at least one assertion.
 		if t.Required && len(t.Covers) == 0 {
-			errs = append(errs, ValidationError{Path: prefix + ".covers", Msg: "required tests should cover at least one assertion"})
+			errs.Add(prefix+".covers", "required tests should cover at least one assertion")
 		}
 	}
-
-	return errs.AsError()
 }
