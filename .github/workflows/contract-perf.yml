@@ -1,0 +1,38 @@
+name: Contract Performance
+
+on:
+  pull_request:
+    paths:
+      - 'cli/internal/autobots/contract/**'
+  workflow_dispatch: # Allows manual triggering if needed
+
+jobs:
+  benchmark:
+    name: Validate Performance
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cli
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run Latency SLA Test
+        run: |
+          go test ./internal/autobots/contract -v -run TestValidationLatency
+
+      - name: Run Benchmarks & Report
+        run: |
+          echo "## 📊 Contract Validation Benchmark" >> $GITHUB_STEP_SUMMARY
+          echo "Run on: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`text" >> $GITHUB_STEP_SUMMARY
+          
+          go test ./internal/autobots/contract -bench=. -benchmem -run=^$ >> $GITHUB_STEP_SUMMARY
+          
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
