@@ -5,7 +5,7 @@
 ### 1. Test-Driven Development is the key to our foundation.
 Always start with a failing test.
 ### 2. The longest part of software development is not producing code.
-Aint nobody got time for that.
+
 ### 3. Agent-produced code doesn't have to be garbage.
 Read it and weep.
 ### 4. Aint nobody got time for that.
@@ -39,3 +39,5 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## Notice
 
 See the [NOTICE](NOTICE) file for required attributions and third-party notices.
+
+It'll be out when it's out. [And we like that.](https://www.youtube.com/watch?v=9rhV7fqlwxM)
