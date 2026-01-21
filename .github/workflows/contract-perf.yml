@@ -3,7 +3,7 @@ name: Contract Performance
 on:
   pull_request:
     paths:
-      - 'contract/**'
+      - 'cli/internal/autobots/contract/**'
 
 permissions:
   contents: read
@@ -33,7 +33,7 @@ jobs:
           path: base-src
 
       - name: Run Benchmark on Base
-        working-directory: base-src/contract
+        working-directory: base-src/cli/internal/autobots/contract
         run: |
           go test -bench=. -benchmem -count=5 -run=^$ > ../../base.txt
         # count=5 runs it 5 times for statistical significance (required for accurate % diff)
@@ -47,7 +47,7 @@ jobs:
           path: head-src
 
       - name: Run Benchmark on Head
-        working-directory: head-src/contract
+        working-directory: head-src/cli/internal/autobots/contract
         run: |
           go test -bench=. -benchmem -count=5 -run=^$ > ../../head.txt
 
