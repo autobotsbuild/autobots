@@ -3,7 +3,7 @@ name: Contract Performance
 on:
   pull_request:
     paths:
-      - 'cli/internal/autobots/contract/**'
+      - 'cli/internal/contract/**'
 
 permissions:
   contents: read
@@ -33,7 +33,7 @@ jobs:
           path: base-src
 
       - name: Run Benchmark on Base
-        working-directory: base-src/cli/internal/autobots/contract
+        working-directory: base-src/cli/internal/contract
         # FIX: Output to ${{ github.workspace }}/base.txt so it is always at the root
         run: |
           go test -bench=. -benchmem -count=6 -run=^$ > ${{ github.workspace }}/base.txt
@@ -47,7 +47,7 @@ jobs:
           path: head-src
 
       - name: Run Benchmark on Head
-        working-directory: head-src/cli/internal/autobots/contract
+        working-directory: head-src/cli/internal/contract
         # FIX: Output to ${{ github.workspace }}/head.txt
         run: |
           go test -bench=. -benchmem -count=6 -run=^$ > ${{ github.workspace }}/head.txt

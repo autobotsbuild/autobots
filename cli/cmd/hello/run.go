@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/SheaHawkins/autobots/internal/cmd/shared"
+	"github.com/autobotsbuild/autobots/cmd/shared"
 )
 
 func Run(ctx context.Context, deps shared.Dependencies, flags *Flags, args []string) error {
